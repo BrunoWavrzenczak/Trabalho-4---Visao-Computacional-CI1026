@@ -209,9 +209,13 @@ print(y_test.value_counts())
 
 ---
 
-# 7. Classificação com K-Nearest Neighbors (K-NN)
+# 7. Classificação com K-Nearest Neighbors (K-NN): com vs. sem PCA
 
-Avaliamos o classificador K-NN variando o número de vizinhos $k$ de 1 a 50 (apenas valores ímpares: $k \in \{1, 3, 5, \dots, 49\}$):
+Para investigar o impacto da redução de dimensionalidade na tarefa de classificação, comparamos o classificador K-NN em dois cenários:
+1. **Sem PCA (4 dimensões)**: Atributos originais padronizados (`StandardScaler`).
+2. **Com PCA (2 dimensões)**: Projeção nos 2 primeiros componentes principais (PC1 e PC2), ajustados sobre os dados de treino e aplicados no teste.
+
+Avaliamos valores de vizinhos $k$ de 1 a 50 (apenas ímpares: $k \in \{1, 3, 5, \dots, 49\}$):
 
 ```{python}
 # Padronização ajustada no treino e aplicada ao teste
@@ -219,60 +223,94 @@ scaler_knn = StandardScaler()
 X_train_scaled = scaler_knn.fit_transform(X_train)
 X_test_scaled = scaler_knn.transform(X_test)
 
+# Redução via PCA (2 componentes) ajustada no treino
+pca_knn = PCA(n_components=2)
+X_train_pca = pca_knn.fit_transform(X_train_scaled)
+X_test_pca = pca_knn.transform(X_test_scaled)
+
 k_values = [k for k in range(1, 51, 2)]
 results = []
 
 for k in k_values:
-    knn = KNeighborsClassifier(n_neighbors=k)
-    knn.fit(X_train_scaled, y_train)
-    preds = knn.predict(X_test_scaled)
-    acc = accuracy_score(y_test, preds)
-    results.append({'k': k, 'Acurácia (%)': round(acc * 100, 2)})
+    # 1. Sem PCA (4D)
+    knn_raw = KNeighborsClassifier(n_neighbors=k)
+    knn_raw.fit(X_train_scaled, y_train)
+    acc_raw = accuracy_score(y_test, knn_raw.predict(X_test_scaled))
+    
+    # 2. Com PCA (2D)
+    knn_pca = KNeighborsClassifier(n_neighbors=k)
+    knn_pca.fit(X_train_pca, y_train)
+    acc_pca = accuracy_score(y_test, knn_pca.predict(X_test_pca))
+    
+    results.append({
+        'k': k,
+        'Sem PCA (4D) (%)': round(acc_raw * 100, 2),
+        'Com PCA (2D) (%)': round(acc_pca * 100, 2)
+    })
 
 df_results = pd.DataFrame(results)
 df_results
 ```
 
-## 7.1 Curva de acurácia vs. valor de $k$
+## 7.1 Comparação das curvas de acurácia vs. valor de $k$
 
 ```{python}
 plt.figure(figsize=(10, 4.5))
-plt.plot(df_results['k'], df_results['Acurácia (%)'], marker='o', linestyle='-', color='b')
-plt.title("Acurácia no conjunto de teste vs. valor de k")
+plt.plot(df_results['k'], df_results['Sem PCA (4D) (%)'], marker='o', linestyle='-', label='Sem PCA (4 dimensões)', color='blue')
+plt.plot(df_results['k'], df_results['Com PCA (2D) (%)'], marker='s', linestyle='--', label='Com PCA (2 dimensões)', color='darkorange')
+plt.title("Comparação de acurácia: com vs. sem PCA em função de k")
 plt.xlabel("Número de vizinhos (k)")
-plt.ylabel("Acurácia (%)")
-plt.xticks(k_values[::2])  # Exibir rótulos alternados para legibilidade
+plt.ylabel("Acurácia no teste (%)")
+plt.xticks(k_values[::2])
 plt.ylim(75, 102)
+plt.legend()
 plt.grid(True, linestyle="--", alpha=0.6)
 plt.show()
 ```
 
-## 7.2 Avaliação detalhada do modelo ($k=7$)
+## 7.2 Avaliação detalhada dos modelos ($k=7$)
 
-Como observado na curva de acurácia, para valores de $k$ entre 7 e 21 a acurácia se mantém em patamar elevado e estável (96,67%). Avaliamos a matriz de confusão e métricas para $k=7$:
+Comparamos as matrizes de confusão lado a lado para $k=7$:
 
 ```{python}
 selected_k = 7
-best_knn = KNeighborsClassifier(n_neighbors=selected_k)
-best_knn.fit(X_train_scaled, y_train)
-y_pred = best_knn.predict(X_test_scaled)
 
-print("Matriz de confusão:")
-cm = confusion_matrix(y_test, y_pred, labels=iris.target_names)
-cm_df = pd.DataFrame(cm, index=iris.target_names, columns=iris.target_names)
-print(cm_df)
+# Modelo sem PCA
+knn_raw_7 = KNeighborsClassifier(n_neighbors=selected_k).fit(X_train_scaled, y_train)
+y_pred_raw = knn_raw_7.predict(X_test_scaled)
+cm_raw = pd.DataFrame(confusion_matrix(y_test, y_pred_raw, labels=iris.target_names),
+                      index=iris.target_names, columns=iris.target_names)
 
-print("\nRelatório de classificação:")
-print(classification_report(y_test, y_pred))
+# Modelo com PCA
+knn_pca_7 = KNeighborsClassifier(n_neighbors=selected_k).fit(X_train_pca, y_train)
+y_pred_pca = knn_pca_7.predict(X_test_pca)
+cm_pca = pd.DataFrame(confusion_matrix(y_test, y_pred_pca, labels=iris.target_names),
+                      index=iris.target_names, columns=iris.target_names)
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+
+sns.heatmap(cm_raw, annot=True, fmt='d', cmap='Blues', cbar=False, ax=axes[0])
+axes[0].set_title(f"Sem PCA (4D) - k={selected_k}\nAcurácia: {accuracy_score(y_test, y_pred_raw)*100:.2f}%")
+axes[0].set_xlabel("Predito")
+axes[0].set_ylabel("Real")
+
+sns.heatmap(cm_pca, annot=True, fmt='d', cmap='Oranges', cbar=False, ax=axes[1])
+axes[1].set_title(f"Com PCA (2D) - k={selected_k}\nAcurácia: {accuracy_score(y_test, y_pred_pca)*100:.2f}%")
+axes[1].set_xlabel("Predito")
+axes[1].set_ylabel("Real")
+
+plt.tight_layout()
+plt.show()
 ```
 
+### Relatórios de classificação:
+
 ```{python}
-plt.figure(figsize=(6, 4))
-sns.heatmap(cm_df, annot=True, fmt='d', cmap='Blues', cbar=False)
-plt.title(f"Matriz de confusão - KNN (k={selected_k})")
-plt.xlabel("Predito")
-plt.ylabel("Real")
-plt.show()
+print("=== Relatório de classificação - Sem PCA (4D) ===")
+print(classification_report(y_test, y_pred_raw))
+
+print("\n=== Relatório de classificação - Com PCA (2D) ===")
+print(classification_report(y_test, y_pred_pca))
 ```
 
 ---
@@ -281,6 +319,8 @@ plt.show()
 
 1. **Atributos mais relevantes**: As características da pétala (`petal_length` e `petal_width`) são as mais eficazes para discriminação entre as três classes.
 2. **PCA**: Apenas 2 componentes principais conseguem capturar quase 96% de toda a variância contida nas 4 variáveis originais.
-3. **Classificação K-NN**:
-   - Para valores baixos a intermediários ($k \in [1, 21]$), o modelo apresenta acurácia alta e estável entre **93,3%** e **96,7%**.
-   - À medida que $k$ cresce acima de 23, a acurácia cai progressivamente até atingir **83,3%** em $k=49$. Isso ocorre porque uma vizinhança excessivamente ampla passa a incluir pontos de classes distintas (especialmente entre *Versicolor* e *Virginica*), suavizando em excesso as fronteiras de decisão (subajuste / *underfitting*).
+3. **Impacto do PCA no K-NN**:
+   - A redução de dimensionalidade para apenas 2 componentes preserva uma acurácia elevada (atingindo **93,3%** nos valores menores de $k$ e mantendo-se em **90,0%** em grande parte do intervalo).
+   - O modelo com todas as 4 dimensões originais tem uma ligeira vantagem (atingindo até **96,7%**), o que é esperado, pois os 4,2% de variância descartados pelo PCA continham pequenos detalhes úteis na fronteira de decisão entre *Versicolor* e *Virginica*.
+   - Por outro lado, o espaço 2D reduzido simplifica drasticamente a representação geométrica e a interpretabilidade com perda mínima de acerto.
+4. **Comportamento com vizinhança ampla ($k > 23$)**: Em ambos os cenários, valores de $k$ muito grandes degradam a acurácia devido à suavização excessiva das fronteiras (*underfitting*), reforçando que a vizinhança ideal para o dataset Iris situa-se em $k \le 21$.
