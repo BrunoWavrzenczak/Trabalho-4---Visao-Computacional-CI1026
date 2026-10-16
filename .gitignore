@@ -1,0 +1,28 @@
+# Ambientes virtuais
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+
+# Quarto / TeX intermediários
+*_files/
+*.tex
+*.aux
+*.log
+*.out
+*.toc
+.quarto/
+Trabalho_4.quarto_ipynb
+
+# macOS
+.DS_Store
