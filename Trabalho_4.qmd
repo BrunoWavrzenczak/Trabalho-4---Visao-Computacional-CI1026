@@ -11,6 +11,15 @@ format:
     toc-title: "Sumário"
     number-sections: true
     colorlinks: true
+    geometry:
+      - top=20mm
+      - bottom=20mm
+      - left=20mm
+      - right=20mm
+    header-includes:
+      - \usepackage{fvextra}
+      - \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+      - \usepackage{booktabs}
     include-before-body:
       - text: |
           \noindent\textbf{Repositório GitHub:} \url{https://github.com/BrunoWavrzenczak/Trabalho-4---Visao-Computacional-CI1026.git}
@@ -46,6 +55,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from IPython.display import Markdown
 
 # Carregar base
 iris = load_iris(as_frame=True)
@@ -270,8 +280,10 @@ for k in k_values:
     })
 
 df_results = pd.DataFrame(results)
+
+# Exibição como tabela formal formatada (Markdown / LaTeX)
 display_cols = ['k', 'CV Sem PCA', 'Teste Sem PCA', 'CV Com PCA', 'Teste Com PCA']
-print(df_results[display_cols].to_string(index=False))
+Markdown(df_results[display_cols].to_markdown(index=False))
 ```
 
 ## 7.1 Comparação das curvas de acurácia na validação cruzada
@@ -420,3 +432,5 @@ print(classification_report(y_test, y_pred_pca))
    - O modelo com PCA (2 dimensões) obteve acurácia média de validação de **91,4%** e acurácia de teste de **90,0%**.
    - Essa discreta diferença mostra que, apesar da perda de ~4,2% da variância total, o PCA reduz o espaço em 50% mantendo excelente capacidade preditiva.
 5. **Efeito do aumento de $k$**: Valores de $k > 23$ resultam em queda contínua de desempenho em ambos os métodos, causada pelo *underfitting* gerado por vizinhanças excessivamente amplas.
+
+
