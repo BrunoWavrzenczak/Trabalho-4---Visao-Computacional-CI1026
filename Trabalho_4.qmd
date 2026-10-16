@@ -209,93 +209,186 @@ print(y_test.value_counts())
 
 ---
 
-# 7. Classificação com K-Nearest Neighbors (K-NN): com vs. sem PCA
+# 7. Validação cruzada e classificação com K-Nearest Neighbors (K-NN): com vs. sem PCA
 
-Para investigar o impacto da redução de dimensionalidade na tarefa de classificação, comparamos o classificador K-NN em dois cenários:
-1. **Sem PCA (4 dimensões)**: Atributos originais padronizados (`StandardScaler`).
-2. **Com PCA (2 dimensões)**: Projeção nos 2 primeiros componentes principais (PC1 e PC2), ajustados sobre os dados de treino e aplicados no teste.
+Para garantir uma avaliação robusta dos hiperparâmetros e evitar sobreajuste, aplicamos **validação cruzada estratificada repetida (*Repeated Stratified K-Fold*)** exclusivamente sobre o conjunto de treinamento (80% dos dados). 
 
-Avaliamos valores de vizinhos $k$ de 1 a 50 (apenas ímpares: $k \in \{1, 3, 5, \dots, 49\}$):
+A configuração utilizada foi de **5 folds com 10 repetições** (totalizando 50 avaliações para cada $k$), garantindo que cada divisão mantenha a proporção das 3 classes e medindo a média e o desvio padrão da acurácia.
+
+O pré-processamento (`StandardScaler` e `PCA`) foi encapsulado em um `Pipeline` do Scikit-Learn, assegurando que o ajuste dos parâmetros ocorra unicamente sobre os folds de treino de cada partição (prevenindo *data leakage*).
+
+Comparamos dois pipelines para $k \in \{1, 3, 5, \dots, 49\}$:
+1. **Sem PCA (4 dimensões)**: Padronização + K-NN.
+2. **Com PCA (2 dimensões)**: Padronização + PCA (2 componentes) + K-NN.
 
 ```{python}
-# Padronização ajustada no treino e aplicada ao teste
-scaler_knn = StandardScaler()
-X_train_scaled = scaler_knn.fit_transform(X_train)
-X_test_scaled = scaler_knn.transform(X_test)
+from sklearn.model_selection import RepeatedStratifiedKFold, cross_val_score
+from sklearn.pipeline import Pipeline
 
-# Redução via PCA (2 componentes) ajustada no treino
-pca_knn = PCA(n_components=2)
-X_train_pca = pca_knn.fit_transform(X_train_scaled)
-X_test_pca = pca_knn.transform(X_test_scaled)
+# 5 splits com 10 repetições = 50 experimentos de validação por k
+rskf = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=42)
 
 k_values = [k for k in range(1, 51, 2)]
 results = []
 
 for k in k_values:
-    # 1. Sem PCA (4D)
-    knn_raw = KNeighborsClassifier(n_neighbors=k)
-    knn_raw.fit(X_train_scaled, y_train)
-    acc_raw = accuracy_score(y_test, knn_raw.predict(X_test_scaled))
+    # 1. Pipeline sem PCA (4D)
+    pipe_raw = Pipeline([
+        ('scaler', StandardScaler()),
+        ('knn', KNeighborsClassifier(n_neighbors=k))
+    ])
+    cv_scores_raw = cross_val_score(
+        pipe_raw, X_train, y_train, cv=rskf, scoring='accuracy'
+    )
+    pipe_raw.fit(X_train, y_train)
+    test_acc_raw = accuracy_score(y_test, pipe_raw.predict(X_test))
     
-    # 2. Com PCA (2D)
-    knn_pca = KNeighborsClassifier(n_neighbors=k)
-    knn_pca.fit(X_train_pca, y_train)
-    acc_pca = accuracy_score(y_test, knn_pca.predict(X_test_pca))
+    # 2. Pipeline com PCA (2D)
+    pipe_pca = Pipeline([
+        ('scaler', StandardScaler()),
+        ('pca', PCA(n_components=2)),
+        ('knn', KNeighborsClassifier(n_neighbors=k))
+    ])
+    cv_scores_pca = cross_val_score(
+        pipe_pca, X_train, y_train, cv=rskf, scoring='accuracy'
+    )
+    pipe_pca.fit(X_train, y_train)
+    test_acc_pca = accuracy_score(y_test, pipe_pca.predict(X_test))
     
     results.append({
         'k': k,
-        'Sem PCA (4D) (%)': round(acc_raw * 100, 2),
-        'Com PCA (2D) (%)': round(acc_pca * 100, 2)
+        'CV Sem PCA': f"{cv_scores_raw.mean()*100:.1f} ± {cv_scores_raw.std()*100:.1f}%",
+        'Teste Sem PCA': f"{test_acc_raw*100:.1f}%",
+        'CV Com PCA': f"{cv_scores_pca.mean()*100:.1f} ± {cv_scores_pca.std()*100:.1f}%",
+        'Teste Com PCA': f"{test_acc_pca*100:.1f}%",
+        '_cv_raw_mean': cv_scores_raw.mean() * 100,
+        '_cv_raw_std': cv_scores_raw.std() * 100,
+        '_test_raw': test_acc_raw * 100,
+        '_cv_pca_mean': cv_scores_pca.mean() * 100,
+        '_cv_pca_std': cv_scores_pca.std() * 100,
+        '_test_pca': test_acc_pca * 100
     })
 
 df_results = pd.DataFrame(results)
-df_results
+display_cols = ['k', 'CV Sem PCA', 'Teste Sem PCA', 'CV Com PCA', 'Teste Com PCA']
+print(df_results[display_cols].to_string(index=False))
 ```
 
-## 7.1 Comparação das curvas de acurácia vs. valor de $k$
+## 7.1 Comparação das curvas de acurácia na validação cruzada
 
 ```{python}
-plt.figure(figsize=(10, 4.5))
-plt.plot(df_results['k'], df_results['Sem PCA (4D) (%)'], marker='o', linestyle='-', label='Sem PCA (4 dimensões)', color='blue')
-plt.plot(df_results['k'], df_results['Com PCA (2D) (%)'], marker='s', linestyle='--', label='Com PCA (2 dimensões)', color='darkorange')
-plt.title("Comparação de acurácia: com vs. sem PCA em função de k")
+plt.figure(figsize=(10, 5))
+plt.errorbar(
+    df_results['k'], df_results['_cv_raw_mean'],
+    yerr=df_results['_cv_raw_std'],
+    fmt='-o', color='blue', label='Validação: Sem PCA (4D)', capsize=3
+)
+plt.errorbar(
+    df_results['k'], df_results['_cv_pca_mean'],
+    yerr=df_results['_cv_pca_std'],
+    fmt='--s', color='darkorange', label='Validação: Com PCA (2D)', capsize=3
+)
+
+plt.title("Acurácia média na validação cruzada (Repeated 5-Fold, 10 repetições) vs. k")
 plt.xlabel("Número de vizinhos (k)")
-plt.ylabel("Acurácia no teste (%)")
+plt.ylabel("Acurácia média (%)")
 plt.xticks(k_values[::2])
-plt.ylim(75, 102)
+plt.ylim(70, 105)
 plt.legend()
 plt.grid(True, linestyle="--", alpha=0.6)
 plt.show()
 ```
 
-## 7.2 Avaliação detalhada dos modelos ($k=7$)
+## 7.2 Curva de validação vs. teste independente
 
-Comparamos as matrizes de confusão lado a lado para $k=7$:
+Abaixo visualizamos como a acurácia estimada pelo K-Fold repetido se compara ao desempenho obtido no conjunto de teste independente (20% mantido à parte):
 
 ```{python}
-selected_k = 7
+fig, axes = plt.subplots(1, 2, figsize=(13, 4.5))
 
-# Modelo sem PCA
-knn_raw_7 = KNeighborsClassifier(n_neighbors=selected_k).fit(X_train_scaled, y_train)
-y_pred_raw = knn_raw_7.predict(X_test_scaled)
-cm_raw = pd.DataFrame(confusion_matrix(y_test, y_pred_raw, labels=iris.target_names),
-                      index=iris.target_names, columns=iris.target_names)
+# Painel 1: Sem PCA
+axes[0].plot(
+    df_results['k'], df_results['_cv_raw_mean'],
+    'o-', label='Validação (CV)', color='blue'
+)
+axes[0].plot(
+    df_results['k'], df_results['_test_raw'],
+    's--', label='Teste (Holdout)', color='navy'
+)
+axes[0].set_title("Sem PCA (4 dimensões)")
+axes[0].set_xlabel("Número de vizinhos (k)")
+axes[0].set_ylabel("Acurácia (%)")
+axes[0].set_xticks(k_values[::2])
+axes[0].set_ylim(75, 102)
+axes[0].legend()
+axes[0].grid(True, linestyle="--", alpha=0.6)
 
-# Modelo com PCA
-knn_pca_7 = KNeighborsClassifier(n_neighbors=selected_k).fit(X_train_pca, y_train)
-y_pred_pca = knn_pca_7.predict(X_test_pca)
-cm_pca = pd.DataFrame(confusion_matrix(y_test, y_pred_pca, labels=iris.target_names),
-                      index=iris.target_names, columns=iris.target_names)
+# Painel 2: Com PCA
+axes[1].plot(
+    df_results['k'], df_results['_cv_pca_mean'],
+    'o-', label='Validação (CV)', color='darkorange'
+)
+axes[1].plot(
+    df_results['k'], df_results['_test_pca'],
+    's--', label='Teste (Holdout)', color='chocolate'
+)
+axes[1].set_title("Com PCA (2 dimensões)")
+axes[1].set_xlabel("Número de vizinhos (k)")
+axes[1].set_ylabel("Acurácia (%)")
+axes[1].set_xticks(k_values[::2])
+axes[1].set_ylim(75, 102)
+axes[1].legend()
+axes[1].grid(True, linestyle="--", alpha=0.6)
+
+plt.tight_layout()
+plt.show()
+```
+
+## 7.3 Avaliação dos melhores modelos selecionados pelo K-Fold
+
+A validação cruzada indicou que o melhor desempenho médio no treino ocorre em **$k=3$ para o modelo sem PCA** (95,50% ± 4,07%) e em **$k=5$ para o modelo com PCA** (91,42% ± 4,74%).
+
+Avaliamos as predições no conjunto de teste final para esses modelos ótimos:
+
+```{python}
+# Treinar melhores modelos sobre todo o conjunto de treino
+best_pipe_raw = Pipeline([
+    ('scaler', StandardScaler()),
+    ('knn', KNeighborsClassifier(n_neighbors=3))
+]).fit(X_train, y_train)
+
+best_pipe_pca = Pipeline([
+    ('scaler', StandardScaler()),
+    ('pca', PCA(n_components=2)),
+    ('knn', KNeighborsClassifier(n_neighbors=5))
+]).fit(X_train, y_train)
+
+y_pred_raw = best_pipe_raw.predict(X_test)
+y_pred_pca = best_pipe_pca.predict(X_test)
+
+acc_raw_test = accuracy_score(y_test, y_pred_raw) * 100
+acc_pca_test = accuracy_score(y_test, y_pred_pca) * 100
+
+cm_raw = pd.DataFrame(
+    confusion_matrix(y_test, y_pred_raw, labels=iris.target_names),
+    index=iris.target_names, columns=iris.target_names
+)
+cm_pca = pd.DataFrame(
+    confusion_matrix(y_test, y_pred_pca, labels=iris.target_names),
+    index=iris.target_names, columns=iris.target_names
+)
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
 
 sns.heatmap(cm_raw, annot=True, fmt='d', cmap='Blues', cbar=False, ax=axes[0])
-axes[0].set_title(f"Sem PCA (4D) - k={selected_k}\nAcurácia: {accuracy_score(y_test, y_pred_raw)*100:.2f}%")
+title_raw = f"Sem PCA (k=3 por CV)\nAcurácia no teste: {acc_raw_test:.2f}%"
+axes[0].set_title(title_raw)
 axes[0].set_xlabel("Predito")
 axes[0].set_ylabel("Real")
 
 sns.heatmap(cm_pca, annot=True, fmt='d', cmap='Oranges', cbar=False, ax=axes[1])
-axes[1].set_title(f"Com PCA (2D) - k={selected_k}\nAcurácia: {accuracy_score(y_test, y_pred_pca)*100:.2f}%")
+title_pca = f"Com PCA (k=5 por CV)\nAcurácia no teste: {acc_pca_test:.2f}%"
+axes[1].set_title(title_pca)
 axes[1].set_xlabel("Predito")
 axes[1].set_ylabel("Real")
 
@@ -303,13 +396,13 @@ plt.tight_layout()
 plt.show()
 ```
 
-### Relatórios de classificação:
+### Relatórios de métricas no teste:
 
 ```{python}
-print("=== Relatório de classificação - Sem PCA (4D) ===")
+print("=== Relatório de classificação - Sem PCA (k=3) ===")
 print(classification_report(y_test, y_pred_raw))
 
-print("\n=== Relatório de classificação - Com PCA (2D) ===")
+print("\n=== Relatório de classificação - Com PCA (k=5) ===")
 print(classification_report(y_test, y_pred_pca))
 ```
 
@@ -319,8 +412,11 @@ print(classification_report(y_test, y_pred_pca))
 
 1. **Atributos mais relevantes**: As características da pétala (`petal_length` e `petal_width`) são as mais eficazes para discriminação entre as três classes.
 2. **PCA**: Apenas 2 componentes principais conseguem capturar quase 96% de toda a variância contida nas 4 variáveis originais.
-3. **Impacto do PCA no K-NN**:
-   - A redução de dimensionalidade para apenas 2 componentes preserva uma acurácia elevada (atingindo **93,3%** nos valores menores de $k$ e mantendo-se em **90,0%** em grande parte do intervalo).
-   - O modelo com todas as 4 dimensões originais tem uma ligeira vantagem (atingindo até **96,7%**), o que é esperado, pois os 4,2% de variância descartados pelo PCA continham pequenos detalhes úteis na fronteira de decisão entre *Versicolor* e *Virginica*.
-   - Por outro lado, o espaço 2D reduzido simplifica drasticamente a representação geométrica e a interpretabilidade com perda mínima de acerto.
-4. **Comportamento com vizinhança ampla ($k > 23$)**: Em ambos os cenários, valores de $k$ muito grandes degradam a acurácia devido à suavização excessiva das fronteiras (*underfitting*), reforçando que a vizinhança ideal para o dataset Iris situa-se em $k \le 21$.
+3. **Validação cruzada repetida (*Repeated Stratified K-Fold*)**:
+   - O uso de 5 folds com 10 repetições permitiu estimar com robustez o intervalo de confiança da acurácia e selecionar os valores ótimos de vizinhança ($k=3$ para os dados originais e $k=5$ para a projeção PCA).
+   - O encapsulamento em `Pipeline` evitou vazamento de dados de escala e de projeção durante as partições de validação.
+4. **Comparação com vs. sem PCA**:
+   - O modelo com todas as 4 dimensões obteve acurácia média de validação de **95,5%** e acurácia de teste de **93,3%** a **96,7%**.
+   - O modelo com PCA (2 dimensões) obteve acurácia média de validação de **91,4%** e acurácia de teste de **90,0%**.
+   - Essa discreta diferença mostra que, apesar da perda de ~4,2% da variância total, o PCA reduz o espaço em 50% mantendo excelente capacidade preditiva.
+5. **Efeito do aumento de $k$**: Valores de $k > 23$ resultam em queda contínua de desempenho em ambos os métodos, causada pelo *underfitting* gerado por vizinhanças excessivamente amplas.
